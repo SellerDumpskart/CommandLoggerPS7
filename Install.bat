@@ -35,17 +35,50 @@ powershell.exe -NoLogo -NoProfile -Command "Set-ExecutionPolicy RemoteSigned -Sc
 echo      OK
 
 echo [3/8] Checking PowerShell 7...
-if exist "C:\Program Files\PowerShell\7\pwsh.exe" (
-    echo      Already installed
+if exist "C:\Program Files\PowerShell\7\pwsh.exe" goto :ps7_ok
+
+:: --- Try winget first ---
+where winget >nul 2>&1
+if %errorlevel% neq 0 goto :ps7_msi_fallback
+
+echo      Installing via winget...
+winget install --id Microsoft.PowerShell --source winget --accept-source-agreements --accept-package-agreements -h
+if exist "C:\Program Files\PowerShell\7\pwsh.exe" goto :ps7_ok
+echo      winget install did not produce pwsh.exe -- falling back to MSI
+
+:ps7_msi_fallback
+:: --- Fallback: download MSI via curl/IWR and install via msiexec ---
+set "PS7_MSI_URL=https://github.com/PowerShell/PowerShell/releases/download/v7.5.4/PowerShell-7.5.4-win-x64.msi"
+set "PS7_MSI=%TEMP%\PowerShell-7.5.4-win-x64.msi"
+
+echo      Downloading PowerShell 7 MSI...
+where curl >nul 2>&1
+if %errorlevel% equ 0 (
+    curl.exe -L -o "%PS7_MSI%" "%PS7_MSI_URL%"
 ) else (
-    echo      Installing via winget...
-    winget install --id Microsoft.PowerShell --source winget --accept-source-agreements --accept-package-agreements -h
-    if not exist "C:\Program Files\PowerShell\7\pwsh.exe" (
-        echo      FAILED to install PowerShell 7. Install manually then re-run.
-        pause
-        exit /b 1
-    )
+    powershell.exe -NoLogo -NoProfile -Command ^
+        "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; " ^
+        "Invoke-WebRequest -Uri '%PS7_MSI_URL%' -OutFile '%PS7_MSI%' -UseBasicParsing"
 )
+
+if not exist "%PS7_MSI%" (
+    echo      FAILED to download PowerShell 7 MSI.
+    echo      Install manually from https://github.com/PowerShell/PowerShell/releases
+    pause
+    exit /b 1
+)
+
+echo      Running MSI installer (silent)...
+msiexec.exe /i "%PS7_MSI%" /qn /norestart
+del /f "%PS7_MSI%" >nul 2>&1
+
+if not exist "C:\Program Files\PowerShell\7\pwsh.exe" (
+    echo      FAILED to install PowerShell 7 via MSI.
+    pause
+    exit /b 1
+)
+
+:ps7_ok
 echo      OK
 
 echo [4/8] Creating temp folder...
@@ -58,7 +91,7 @@ echo [5/8] Downloading files from GitHub...
 powershell.exe -NoLogo -NoProfile -Command ^
     "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; " ^
     "try { " ^
-    "  Invoke-WebRequest -Uri '%BASE_URL%/system/CommandLoggerPS7.ps1' -OutFile '%TEMP_DIR%\system\CommandLoggerPS7.ps1' -UseBasicParsing; " ^
+    "  Invoke-WebRequest -Uri '%BASE_URL%/CommandLoggerPS7.ps1' -OutFile '%TEMP_DIR%\system\CommandLoggerPS7.ps1' -UseBasicParsing; " ^
     "  Invoke-WebRequest -Uri '%BASE_URL%/Setup.ps1' -OutFile '%TEMP_DIR%\Setup.ps1' -UseBasicParsing; " ^
     "  Write-Host '     OK' " ^
     "} catch { " ^
