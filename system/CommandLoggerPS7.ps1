@@ -173,19 +173,14 @@ function Register-SmartCd {
             [Parameter(ValueFromRemainingArguments=$true)]
             [string[]]$Path
         )
-        try {
-            if ($Path.Count -gt 1)      { Set-Location ($Path -join " ") -ErrorAction Stop }
-            elseif ($Path.Count -eq 1)  { Set-Location $Path[0] -ErrorAction Stop }
-            else                        { Set-Location $HOME -ErrorAction Stop }
-            $global:LASTEXITCODE = 0
-        } catch {
-            # Set LASTEXITCODE so PS7's || operator triggers the fallback
-            $global:LASTEXITCODE = 1
-            Write-Error $_.Exception.Message -ErrorAction Continue
-        }
+        # We deliberately let Set-Location's error propagate as a terminating
+        # error so PS7's '||' pipeline operator triggers the fallback branch.
+        # PS7's && / || check $? from the last command, and caught errors
+        # don't flip $? — only uncaught/terminating errors do.
+        if ($Path.Count -gt 1)      { Set-Location ($Path -join " ") -ErrorAction Stop }
+        elseif ($Path.Count -eq 1)  { Set-Location $Path[0] -ErrorAction Stop }
+        else                        { Set-Location $HOME -ErrorAction Stop }
     }
-    # Force-overwrite the built-in cd alias to point at our function.
-    # Set-Alias -Force works on AllScope aliases; Remove-Item does not.
     Set-Alias -Name cd -Value Invoke-SmartCd -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
 }
 
