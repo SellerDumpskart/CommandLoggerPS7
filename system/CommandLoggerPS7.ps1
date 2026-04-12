@@ -466,6 +466,32 @@ function Initialize-CmdCompat {
     Set-Alias -Name ftype  -Value Invoke-CmdFtype  -Scope Global -Force -ErrorAction SilentlyContinue
     Set-Alias -Name color  -Value Invoke-CmdColor  -Scope Global -Force -ErrorAction SilentlyContinue
 
+    # ---- START: CMD-style `start "" "path"` compatibility ----
+    # CMD's `start` requires an empty quoted title before a quoted path:
+    #   start "" "C:\path\to\file.bat"
+    # PS7 aliases `start` to Start-Process, which interprets "" as the
+    # FilePath argument and rejects it. This wrapper strips a leading
+    # empty-string arg (the CMD title) and forwards the real path.
+    function global:Invoke-CmdStart {
+        $a = @($args)
+        # Strip leading empty/whitespace title arg if present
+        if ($a.Count -gt 0 -and [string]::IsNullOrWhiteSpace($a[0])) {
+            $a = if ($a.Count -gt 1) { $a[1..($a.Count - 1)] } else { @() }
+        }
+        if ($a.Count -eq 0) {
+            Write-Host "start: no path specified" -ForegroundColor DarkYellow
+            return
+        }
+        $expanded = @($a | ForEach-Object { [Environment]::ExpandEnvironmentVariables("$_") })
+        $filePath = $expanded[0]
+        if ($expanded.Count -gt 1) {
+            Start-Process -FilePath $filePath -ArgumentList ($expanded[1..($expanded.Count - 1)])
+        } else {
+            Start-Process -FilePath $filePath
+        }
+    }
+    Set-Alias -Name start -Value Invoke-CmdStart -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+
     # ---- 'c' shortcut: still tries cmd.exe for users who want raw CMD access ----
     # In contexts where cmd.exe works, this runs arbitrary CMD commands.
     # In contexts where cmd.exe is blocked, this will silently fail.
