@@ -223,24 +223,29 @@ function Initialize-CmdCompat {
     # Set-Alias -Force, pointing it at a uniquely-named wrapper function.
     # -----------------------------------------------------------
 
-    # Define wrapper functions under unique names (Invoke-Cmd*)
-    function global:Invoke-CmdDir    { & cmd.exe /c "dir $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdMove   { & cmd.exe /c "move $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdCopy   { & cmd.exe /c "copy $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdDel    { & cmd.exe /c "del $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdRen    { & cmd.exe /c "ren $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdRmdir  { & cmd.exe /c "rmdir $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdType   { & cmd.exe /c "type $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdMklink { & cmd.exe /c "mklink $(Expand-CmdVars ($args -join ' '))" }
+    # Define wrapper functions under unique names (Invoke-Cmd*).
+    # NOTE: Each wrapper prefixes the command with `cd /d "$PWD" &&` so
+    # the CMD subshell starts in the same directory as the PS session.
+    # Without this, cmd.exe inherits its working dir from the parent
+    # process (typically C:\Windows\System32 for elevated sessions),
+    # which breaks commands that operate on the current folder.
+    function global:Invoke-CmdDir    { & cmd.exe /c "cd /d ""$PWD"" && dir $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdMove   { & cmd.exe /c "cd /d ""$PWD"" && move $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdCopy   { & cmd.exe /c "cd /d ""$PWD"" && copy $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdDel    { & cmd.exe /c "cd /d ""$PWD"" && del $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdRen    { & cmd.exe /c "cd /d ""$PWD"" && ren $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdRmdir  { & cmd.exe /c "cd /d ""$PWD"" && rmdir $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdType   { & cmd.exe /c "cd /d ""$PWD"" && type $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdMklink { & cmd.exe /c "cd /d ""$PWD"" && mklink $(Expand-CmdVars ($args -join ' '))" }
     function global:Invoke-CmdAssoc  { & cmd.exe /c "assoc $(Expand-CmdVars ($args -join ' '))" }
     function global:Invoke-CmdFtype  { & cmd.exe /c "ftype $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdVol    { & cmd.exe /c "vol $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdVer    { & cmd.exe /c "ver $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdVol    { & cmd.exe /c "cd /d ""$PWD"" && vol $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdVer    { & cmd.exe /c "ver" }
     function global:Invoke-CmdTitle  { & cmd.exe /c "title $(Expand-CmdVars ($args -join ' '))" }
     function global:Invoke-CmdSet    { & cmd.exe /c "set $(Expand-CmdVars ($args -join ' '))" }
     function global:Invoke-CmdColor  { & cmd.exe /c "color $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdCls    { & cmd.exe /c "cls" }
-    function global:Invoke-CmdMkdir  { & cmd.exe /c "mkdir $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdCls    { Clear-Host }
+    function global:Invoke-CmdMkdir  { & cmd.exe /c "cd /d ""$PWD"" && mkdir $(Expand-CmdVars ($args -join ' '))" }
     function global:Invoke-CmdEcho   { Write-Host (Expand-CmdVars ($args -join ' ')) }
     function global:Invoke-CmdCurl   {
         $expanded = $args | ForEach-Object { Expand-CmdVars "$_" }
@@ -268,8 +273,8 @@ function Initialize-CmdCompat {
     Set-Alias -Name echo   -Value Invoke-CmdEcho   -Scope Global -Force -Option AllScope
     Set-Alias -Name curl   -Value Invoke-CmdCurl   -Scope Global -Force -Option AllScope
 
-    # ---- 'c' shortcut: force run anything via CMD (unique name, no conflict) ----
-    function global:c { & cmd.exe /c $($args -join ' ') }
+    # ---- 'c' shortcut: force run anything via CMD (preserves PWD) ----
+    function global:c { & cmd.exe /c "cd /d ""$PWD"" && $($args -join ' ')" }
 
     # ---- NETWORK SHORTCUTS ----
     function global:flushdns       { & ipconfig.exe /flushdns }
