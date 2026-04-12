@@ -167,8 +167,8 @@ function Register-PromptLogger {
 }
 
 function Register-SmartCd {
-    Remove-Item Alias:cd -Force -ErrorAction SilentlyContinue
-    function global:cd {
+    # Define the smart-cd function in global scope
+    function global:Invoke-SmartCd {
         param(
             [Parameter(ValueFromRemainingArguments=$true)]
             [string[]]$Path
@@ -177,6 +177,9 @@ function Register-SmartCd {
         elseif ($Path.Count -eq 1)  { Set-Location $Path[0] }
         else                        { Set-Location $HOME }
     }
+    # Force-overwrite the built-in cd alias to point at our function.
+    # Set-Alias -Force works on AllScope aliases; Remove-Item does not.
+    Set-Alias -Name cd -Value Invoke-SmartCd -Scope Global -Force -Option AllScope
 }
 
 function Set-LightTerminalColors {
@@ -209,36 +212,64 @@ function Expand-CmdVars([string]$text) {
 }
 
 function Initialize-CmdCompat {
-    # Remove conflicting PowerShell aliases (added 'dir')
-    @('curl','move','copy','del','ren','rmdir','type','set','path','cls','color','dir') | ForEach-Object {
-        Remove-Item "Alias:$_" -Force -ErrorAction SilentlyContinue
-    }
+    # -----------------------------------------------------------
+    # CMD BUILT-IN WRAPPERS
+    # -----------------------------------------------------------
+    # Problem: Aliases like 'dir', 'cd', 'echo', 'mkdir', 'copy', 'del',
+    # 'move', 'ren', 'type', 'cls', 'curl' are defined with the AllScope
+    # option in PS7. AllScope aliases cannot be removed with Remove-Item
+    # (it silently fails) and they take precedence over functions in name
+    # resolution. The fix is to force-overwrite the alias itself using
+    # Set-Alias -Force, pointing it at a uniquely-named wrapper function.
+    # -----------------------------------------------------------
 
-    # ---- curl: real curl.exe with %VAR% expansion ----
-    function global:curl {
+    # Define wrapper functions under unique names (Invoke-Cmd*)
+    function global:Invoke-CmdDir    { & cmd.exe /c "dir $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdMove   { & cmd.exe /c "move $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdCopy   { & cmd.exe /c "copy $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdDel    { & cmd.exe /c "del $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdRen    { & cmd.exe /c "ren $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdRmdir  { & cmd.exe /c "rmdir $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdType   { & cmd.exe /c "type $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdMklink { & cmd.exe /c "mklink $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdAssoc  { & cmd.exe /c "assoc $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdFtype  { & cmd.exe /c "ftype $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdVol    { & cmd.exe /c "vol $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdVer    { & cmd.exe /c "ver $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdTitle  { & cmd.exe /c "title $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdSet    { & cmd.exe /c "set $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdColor  { & cmd.exe /c "color $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdCls    { & cmd.exe /c "cls" }
+    function global:Invoke-CmdMkdir  { & cmd.exe /c "mkdir $(Expand-CmdVars ($args -join ' '))" }
+    function global:Invoke-CmdEcho   { Write-Host (Expand-CmdVars ($args -join ' ')) }
+    function global:Invoke-CmdCurl   {
         $expanded = $args | ForEach-Object { Expand-CmdVars "$_" }
         & curl.exe @expanded
     }
 
-    # ---- 'c' shortcut: force run anything via CMD ----
-    function global:c { & cmd.exe /c $($args -join ' ') }
+    # Force-overwrite the built-in aliases (even AllScope ones)
+    Set-Alias -Name dir    -Value Invoke-CmdDir    -Scope Global -Force -Option AllScope
+    Set-Alias -Name move   -Value Invoke-CmdMove   -Scope Global -Force -Option AllScope
+    Set-Alias -Name copy   -Value Invoke-CmdCopy   -Scope Global -Force -Option AllScope
+    Set-Alias -Name del    -Value Invoke-CmdDel    -Scope Global -Force -Option AllScope
+    Set-Alias -Name ren    -Value Invoke-CmdRen    -Scope Global -Force -Option AllScope
+    Set-Alias -Name rmdir  -Value Invoke-CmdRmdir  -Scope Global -Force -Option AllScope
+    Set-Alias -Name type   -Value Invoke-CmdType   -Scope Global -Force -Option AllScope
+    Set-Alias -Name mklink -Value Invoke-CmdMklink -Scope Global -Force
+    Set-Alias -Name assoc  -Value Invoke-CmdAssoc  -Scope Global -Force
+    Set-Alias -Name ftype  -Value Invoke-CmdFtype  -Scope Global -Force
+    Set-Alias -Name vol    -Value Invoke-CmdVol    -Scope Global -Force
+    Set-Alias -Name ver    -Value Invoke-CmdVer    -Scope Global -Force
+    Set-Alias -Name title  -Value Invoke-CmdTitle  -Scope Global -Force
+    Set-Alias -Name set    -Value Invoke-CmdSet    -Scope Global -Force -Option AllScope
+    Set-Alias -Name color  -Value Invoke-CmdColor  -Scope Global -Force
+    Set-Alias -Name cls    -Value Invoke-CmdCls    -Scope Global -Force -Option AllScope
+    Set-Alias -Name mkdir  -Value Invoke-CmdMkdir  -Scope Global -Force -Option AllScope
+    Set-Alias -Name echo   -Value Invoke-CmdEcho   -Scope Global -Force -Option AllScope
+    Set-Alias -Name curl   -Value Invoke-CmdCurl   -Scope Global -Force -Option AllScope
 
-    # ---- CMD built-ins (no .exe equivalents) ----
-    function global:dir    { & cmd.exe /c "dir $(Expand-CmdVars ($args -join ' '))" }
-    function global:move   { & cmd.exe /c "move $(Expand-CmdVars ($args -join ' '))" }
-    function global:copy   { & cmd.exe /c "copy $(Expand-CmdVars ($args -join ' '))" }
-    function global:del    { & cmd.exe /c "del $(Expand-CmdVars ($args -join ' '))" }
-    function global:ren    { & cmd.exe /c "ren $(Expand-CmdVars ($args -join ' '))" }
-    function global:rmdir  { & cmd.exe /c "rmdir $(Expand-CmdVars ($args -join ' '))" }
-    function global:type   { & cmd.exe /c "type $(Expand-CmdVars ($args -join ' '))" }
-    function global:mklink { & cmd.exe /c "mklink $(Expand-CmdVars ($args -join ' '))" }
-    function global:assoc  { & cmd.exe /c "assoc $(Expand-CmdVars ($args -join ' '))" }
-    function global:ftype  { & cmd.exe /c "ftype $(Expand-CmdVars ($args -join ' '))" }
-    function global:vol    { & cmd.exe /c "vol $(Expand-CmdVars ($args -join ' '))" }
-    function global:ver    { & cmd.exe /c "ver $(Expand-CmdVars ($args -join ' '))" }
-    function global:title  { & cmd.exe /c "title $(Expand-CmdVars ($args -join ' '))" }
-    function global:set    { & cmd.exe /c "set $(Expand-CmdVars ($args -join ' '))" }
-    function global:color  { & cmd.exe /c "color $(Expand-CmdVars ($args -join ' '))" }
+    # ---- 'c' shortcut: force run anything via CMD (unique name, no conflict) ----
+    function global:c { & cmd.exe /c $($args -join ' ') }
 
     # ---- NETWORK SHORTCUTS ----
     function global:flushdns       { & ipconfig.exe /flushdns }
