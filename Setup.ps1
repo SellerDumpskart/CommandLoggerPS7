@@ -23,17 +23,44 @@ $pwshCandidates = @(
 foreach ($c in $pwshCandidates) { if (Test-Path $c) { $pwshExe = $c; break } }
 
 if (-not $pwshExe) {
-    Write-Host "  PowerShell 7 not found. Installing via winget..." -ForegroundColor Gray
-    try {
-        winget install --id Microsoft.PowerShell --source winget `
-            --accept-source-agreements --accept-package-agreements -h | Out-Null
-    } catch {
-        Write-Host "  winget install failed: $($_.Exception.Message)" -ForegroundColor Red
-        exit 1
+    Write-Host "  PowerShell 7 not found. Attempting install..." -ForegroundColor Gray
+
+    $installed = $false
+
+    # --- Try winget first ---
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "  Trying winget..." -ForegroundColor Gray
+        try {
+            winget install --id Microsoft.PowerShell --source winget `
+                --accept-source-agreements --accept-package-agreements -h | Out-Null
+            foreach ($c in $pwshCandidates) { if (Test-Path $c) { $pwshExe = $c; $installed = $true; break } }
+        } catch {
+            Write-Host "  winget failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+    } else {
+        Write-Host "  winget not available." -ForegroundColor Gray
     }
-    foreach ($c in $pwshCandidates) { if (Test-Path $c) { $pwshExe = $c; break } }
+
+    # --- Fallback: direct MSI download ---
+    if (-not $installed) {
+        Write-Host "  Falling back to direct MSI download..." -ForegroundColor Gray
+        $msiUrl  = "https://github.com/PowerShell/PowerShell/releases/download/v7.5.4/PowerShell-7.5.4-win-x64.msi"
+        $msiPath = Join-Path $env:TEMP "PowerShell-7.5.4-win-x64.msi"
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath -UseBasicParsing
+            Write-Host "  Running MSI installer (silent)..." -ForegroundColor Gray
+            Start-Process msiexec.exe -ArgumentList "/i `"$msiPath`" /qn /norestart" -Wait
+            Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
+            foreach ($c in $pwshCandidates) { if (Test-Path $c) { $pwshExe = $c; break } }
+        } catch {
+            Write-Host "  MSI install failed: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
     if (-not $pwshExe) {
         Write-Host "  PowerShell 7 still not found. Aborting." -ForegroundColor Red
+        Write-Host "  Install manually from https://github.com/PowerShell/PowerShell/releases" -ForegroundColor Red
         exit 1
     }
 }
@@ -114,15 +141,14 @@ Write-Host "=====================================================" -ForegroundCo
 Write-Host ""
 Write-Host "What works now:" -ForegroundColor Cyan
 Write-Host "  - && and ||                    (PS7 native)" -ForegroundColor Gray
-Write-Host "  - dir /s /b, del /q, copy /y   (cmdcompat wrappers)" -ForegroundColor Gray
-Write-Host "  - move /Y, ren, type, set      (cmdcompat wrappers)" -ForegroundColor Gray
-Write-Host "  - %TEMP%, %USERPROFILE% etc    (auto-expanded)" -ForegroundColor Gray
+Write-Host "  - dir /s /b, del /q, copy /y   (pure PS wrappers)" -ForegroundColor Gray
+Write-Host "  - move, ren, type, mkdir       (pure PS wrappers)" -ForegroundColor Gray
+Write-Host "  - set VAR=value  PERSISTS      (real PS env vars now)" -ForegroundColor Gray
+Write-Host "  - echo %USERNAME% etc          (expanded via .NET)" -ForegroundColor Gray
 Write-Host "  - curl with %VAR% args         (real curl.exe)" -ForegroundColor Gray
-Write-Host "  - c <any cmd command>          (force CMD)" -ForegroundColor Gray
-Write-Host "  - 80+ shortcuts: flushdns, ports, gpforce, etc." -ForegroundColor Gray
+Write-Host "  - 60+ shortcuts: flushdns, ports, gpforce, etc." -ForegroundColor Gray
 Write-Host "  - cd program files             (no quotes needed)" -ForegroundColor Gray
 Write-Host ""
-Write-Host "Caveat: 'set VAR=value' runs in a cmd subshell, so the var" -ForegroundColor DarkYellow
-Write-Host "        does NOT persist into your PS7 session." -ForegroundColor DarkYellow
-Write-Host "        For persistent env vars, use:  `$env:VAR = 'value'" -ForegroundColor DarkYellow
+Write-Host "Works in: interactive PS7, CMD auto-launch, and remote" -ForegroundColor DarkGray
+Write-Host "          management tool contexts (DWAgent, MeshCentral)" -ForegroundColor DarkGray
 Write-Host ""
