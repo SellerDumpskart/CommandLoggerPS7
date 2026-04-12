@@ -421,18 +421,18 @@ function Initialize-CmdCompat {
     Set-Alias -Name move   -Value Invoke-CmdMove   -Scope Global -Force -Option AllScope
     Set-Alias -Name copy   -Value Invoke-CmdCopy   -Scope Global -Force -Option AllScope
     Set-Alias -Name del    -Value Invoke-CmdDel    -Scope Global -Force -Option AllScope
-    Set-Alias -Name erase  -Value Invoke-CmdDel    -Scope Global -Force
+    Set-Alias -Name erase  -Value Invoke-CmdDel    -Scope Global -Force -Option AllScope
     Set-Alias -Name ren    -Value Invoke-CmdRen    -Scope Global -Force -Option AllScope
-    Set-Alias -Name rename -Value Invoke-CmdRen    -Scope Global -Force
+    Set-Alias -Name rename -Value Invoke-CmdRen    -Scope Global -Force -Option AllScope
     Set-Alias -Name rmdir  -Value Invoke-CmdRmdir  -Scope Global -Force -Option AllScope
-    Set-Alias -Name rd     -Value Invoke-CmdRmdir  -Scope Global -Force
+    Set-Alias -Name rd     -Value Invoke-CmdRmdir  -Scope Global -Force -Option AllScope
     Set-Alias -Name type   -Value Invoke-CmdType   -Scope Global -Force -Option AllScope
     Set-Alias -Name mkdir  -Value Invoke-CmdMkdir  -Scope Global -Force -Option AllScope
-    Set-Alias -Name md     -Value Invoke-CmdMkdir  -Scope Global -Force
+    Set-Alias -Name md     -Value Invoke-CmdMkdir  -Scope Global -Force -Option AllScope
     Set-Alias -Name echo   -Value Invoke-CmdEcho   -Scope Global -Force -Option AllScope
     Set-Alias -Name set    -Value Invoke-CmdSet    -Scope Global -Force -Option AllScope
     Set-Alias -Name cls    -Value Invoke-CmdCls    -Scope Global -Force -Option AllScope
-    Set-Alias -Name clear  -Value Invoke-CmdCls    -Scope Global -Force
+    Set-Alias -Name clear  -Value Invoke-CmdCls    -Scope Global -Force -Option AllScope
     Set-Alias -Name title  -Value Invoke-CmdTitle  -Scope Global -Force
     Set-Alias -Name ver    -Value Invoke-CmdVer    -Scope Global -Force
     Set-Alias -Name vol    -Value Invoke-CmdVol    -Scope Global -Force
