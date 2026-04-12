@@ -213,67 +213,238 @@ function Expand-CmdVars([string]$text) {
 
 function Initialize-CmdCompat {
     # -----------------------------------------------------------
-    # CMD BUILT-IN WRAPPERS
+    # CMD BUILT-IN WRAPPERS -- PURE POWERSHELL (no cmd.exe)
     # -----------------------------------------------------------
-    # Problem: Aliases like 'dir', 'cd', 'echo', 'mkdir', 'copy', 'del',
-    # 'move', 'ren', 'type', 'cls', 'curl' are defined with the AllScope
-    # option in PS7. AllScope aliases cannot be removed with Remove-Item
-    # (it silently fails) and they take precedence over functions in name
-    # resolution. The fix is to force-overwrite the alias itself using
-    # Set-Alias -Force, pointing it at a uniquely-named wrapper function.
+    # Design note: The previous version routed everything through
+    # `cmd.exe /c "..."`. That breaks in environments where cmd.exe
+    # output is swallowed (service-launched sessions, remote tools
+    # like DWAgent/MeshCentral, some elevated contexts). These
+    # implementations use native PowerShell cmdlets instead, which
+    # work in every context and also make `set VAR=value` actually
+    # persist (since it's now real PS env-var assignment).
     # -----------------------------------------------------------
 
-    # Define wrapper functions under unique names (Invoke-Cmd*).
-    # NOTE: Each wrapper prefixes the command with `cd /d "$PWD" &&` so
-    # the CMD subshell starts in the same directory as the PS session.
-    # Without this, cmd.exe inherits its working dir from the parent
-    # process (typically C:\Windows\System32 for elevated sessions),
-    # which breaks commands that operate on the current folder.
-    function global:Invoke-CmdDir    { & cmd.exe /c "cd /d ""$PWD"" && dir $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdMove   { & cmd.exe /c "cd /d ""$PWD"" && move $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdCopy   { & cmd.exe /c "cd /d ""$PWD"" && copy $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdDel    { & cmd.exe /c "cd /d ""$PWD"" && del $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdRen    { & cmd.exe /c "cd /d ""$PWD"" && ren $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdRmdir  { & cmd.exe /c "cd /d ""$PWD"" && rmdir $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdType   { & cmd.exe /c "cd /d ""$PWD"" && type $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdMklink { & cmd.exe /c "cd /d ""$PWD"" && mklink $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdAssoc  { & cmd.exe /c "assoc $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdFtype  { & cmd.exe /c "ftype $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdVol    { & cmd.exe /c "cd /d ""$PWD"" && vol $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdVer    { & cmd.exe /c "ver" }
-    function global:Invoke-CmdTitle  { & cmd.exe /c "title $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdSet    { & cmd.exe /c "set $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdColor  { & cmd.exe /c "color $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdCls    { Clear-Host }
-    function global:Invoke-CmdMkdir  { & cmd.exe /c "cd /d ""$PWD"" && mkdir $(Expand-CmdVars ($args -join ' '))" }
-    function global:Invoke-CmdEcho   { Write-Host (Expand-CmdVars ($args -join ' ')) }
-    function global:Invoke-CmdCurl   {
-        $expanded = $args | ForEach-Object { Expand-CmdVars "$_" }
+    # ---- DIR: supports CMD-style /b /s /a switches ----
+    function global:Invoke-CmdDir {
+        $pathArgs  = @()
+        $bare      = $false
+        $recursive = $false
+        $force     = $false
+        foreach ($a in $args) {
+            switch -Regex ($a) {
+                '^/b' { $bare = $true }
+                '^/s' { $recursive = $true }
+                '^/a' { $force = $true }
+                '^/'  { }  # ignore other switches
+                default { $pathArgs += (Expand-CmdVars $a) }
+            }
+        }
+        $target = if ($pathArgs.Count -gt 0) { $pathArgs -join ' ' } else { '.' }
+        $gciParams = @{ Path = $target; ErrorAction = 'SilentlyContinue' }
+        if ($recursive) { $gciParams.Recurse = $true }
+        if ($force)     { $gciParams.Force   = $true }
+        if ($bare) {
+            Get-ChildItem @gciParams -Name
+        } else {
+            Get-ChildItem @gciParams
+        }
+    }
+
+    # ---- DEL / ERASE: supports /q /s /f ----
+    function global:Invoke-CmdDel {
+        $pathArgs = @()
+        $recursive = $false
+        foreach ($a in $args) {
+            switch -Regex ($a) {
+                '^/s' { $recursive = $true }
+                '^/q' { }
+                '^/f' { }
+                '^/'  { }
+                default { $pathArgs += (Expand-CmdVars $a) }
+            }
+        }
+        foreach ($p in $pathArgs) {
+            Remove-Item -Path $p -Force -Recurse:$recursive -ErrorAction SilentlyContinue
+        }
+    }
+
+    # ---- COPY: supports /y ----
+    function global:Invoke-CmdCopy {
+        $pathArgs = @()
+        foreach ($a in $args) {
+            if ($a -notmatch '^/') { $pathArgs += (Expand-CmdVars $a) }
+        }
+        if ($pathArgs.Count -ge 2) {
+            $dest = $pathArgs[-1]
+            $srcs = $pathArgs[0..($pathArgs.Count - 2)]
+            Copy-Item -Path $srcs -Destination $dest -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # ---- MOVE: supports /y ----
+    function global:Invoke-CmdMove {
+        $pathArgs = @()
+        foreach ($a in $args) {
+            if ($a -notmatch '^/') { $pathArgs += (Expand-CmdVars $a) }
+        }
+        if ($pathArgs.Count -ge 2) {
+            $dest = $pathArgs[-1]
+            $srcs = $pathArgs[0..($pathArgs.Count - 2)]
+            Move-Item -Path $srcs -Destination $dest -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # ---- REN / RENAME ----
+    function global:Invoke-CmdRen {
+        $pathArgs = @($args | ForEach-Object { Expand-CmdVars $_ })
+        if ($pathArgs.Count -ge 2) {
+            Rename-Item -Path $pathArgs[0] -NewName $pathArgs[1] -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # ---- MKDIR / MD ----
+    function global:Invoke-CmdMkdir {
+        foreach ($a in $args) {
+            if ($a -notmatch '^/') {
+                $p = Expand-CmdVars $a
+                New-Item -ItemType Directory -Path $p -Force -ErrorAction SilentlyContinue | Out-Null
+            }
+        }
+    }
+
+    # ---- RMDIR / RD: supports /s /q ----
+    function global:Invoke-CmdRmdir {
+        $pathArgs = @()
+        $recursive = $false
+        foreach ($a in $args) {
+            switch -Regex ($a) {
+                '^/s' { $recursive = $true }
+                '^/q' { }
+                '^/'  { }
+                default { $pathArgs += (Expand-CmdVars $a) }
+            }
+        }
+        foreach ($p in $pathArgs) {
+            Remove-Item -Path $p -Force -Recurse:$recursive -ErrorAction SilentlyContinue
+        }
+    }
+
+    # ---- TYPE: cat a file ----
+    function global:Invoke-CmdType {
+        foreach ($a in $args) {
+            if ($a -notmatch '^/') {
+                Get-Content -Path (Expand-CmdVars $a) -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # ---- ECHO: prints with %VAR% expansion ----
+    function global:Invoke-CmdEcho {
+        $text = ($args -join ' ')
+        $expanded = [Environment]::ExpandEnvironmentVariables($text)
+        Write-Host $expanded
+    }
+
+    # ---- SET: actually persists because it's real PS env-var assignment ----
+    function global:Invoke-CmdSet {
+        if ($args.Count -eq 0) {
+            # `set` with no args: list all env vars (CMD behavior)
+            Get-ChildItem Env: | ForEach-Object { "$($_.Name)=$($_.Value)" }
+            return
+        }
+        $joined = ($args -join ' ')
+        if ($joined -match '^([^=]+)=(.*)$') {
+            $name  = $matches[1].Trim()
+            $value = $matches[2]
+            Set-Item -Path "Env:$name" -Value $value
+        } else {
+            # `set VAR` (no =): show just that var
+            $name = $joined.Trim()
+            $val  = [Environment]::GetEnvironmentVariable($name)
+            if ($val) { "$name=$val" }
+        }
+    }
+
+    # ---- CLS / CLEAR ----
+    function global:Invoke-CmdCls { Clear-Host }
+
+    # ---- TITLE ----
+    function global:Invoke-CmdTitle {
+        $Host.UI.RawUI.WindowTitle = ($args -join ' ')
+    }
+
+    # ---- VER: Windows version ----
+    function global:Invoke-CmdVer {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+        if ($os) { "Microsoft Windows [Version $($os.Version)]" }
+    }
+
+    # ---- VOL: drive label/serial ----
+    function global:Invoke-CmdVol {
+        $drive = if ($args.Count -gt 0) { ($args[0] -replace '[:\\]','') } else { (Get-Location).Drive.Name }
+        $v = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='${drive}:'" -ErrorAction SilentlyContinue
+        if ($v) {
+            " Volume in drive ${drive} is $($v.VolumeName)"
+            " Volume Serial Number is $($v.VolumeSerialNumber)"
+        }
+    }
+
+    # ---- CURL: real curl.exe (calls the .exe directly, no cmd.exe) ----
+    function global:Invoke-CmdCurl {
+        $expanded = $args | ForEach-Object { [Environment]::ExpandEnvironmentVariables("$_") }
         & curl.exe @expanded
     }
 
-    # Force-overwrite the built-in aliases (even AllScope ones)
+    # ---- MKLINK: requires cmd.exe (no PS equivalent); call it directly via .exe ----
+    # If cmd.exe is unavailable in this context, mklink won't work. That's unavoidable.
+    function global:Invoke-CmdMklink {
+        $joined = ($args -join ' ')
+        Write-Host "mklink requires cmd.exe; not supported in cmd-less contexts." -ForegroundColor DarkYellow
+        Write-Host "Use New-Item -ItemType SymbolicLink instead." -ForegroundColor DarkYellow
+    }
+
+    # ---- ASSOC / FTYPE: use assoc.exe / ftype.exe via cmd (fallback to no-op message) ----
+    function global:Invoke-CmdAssoc {
+        Write-Host "assoc/ftype require cmd.exe built-ins; not supported in cmd-less contexts." -ForegroundColor DarkYellow
+    }
+    function global:Invoke-CmdFtype {
+        Write-Host "assoc/ftype require cmd.exe built-ins; not supported in cmd-less contexts." -ForegroundColor DarkYellow
+    }
+
+    # ---- COLOR: PS equivalent for terminal foreground ----
+    function global:Invoke-CmdColor {
+        Write-Host "'color' changes the CMD window color; use PSReadLine or terminal settings in PS7." -ForegroundColor DarkYellow
+    }
+
+    # Force-overwrite the built-in aliases (works on AllScope ones)
     Set-Alias -Name dir    -Value Invoke-CmdDir    -Scope Global -Force -Option AllScope
     Set-Alias -Name move   -Value Invoke-CmdMove   -Scope Global -Force -Option AllScope
     Set-Alias -Name copy   -Value Invoke-CmdCopy   -Scope Global -Force -Option AllScope
     Set-Alias -Name del    -Value Invoke-CmdDel    -Scope Global -Force -Option AllScope
+    Set-Alias -Name erase  -Value Invoke-CmdDel    -Scope Global -Force
     Set-Alias -Name ren    -Value Invoke-CmdRen    -Scope Global -Force -Option AllScope
+    Set-Alias -Name rename -Value Invoke-CmdRen    -Scope Global -Force
     Set-Alias -Name rmdir  -Value Invoke-CmdRmdir  -Scope Global -Force -Option AllScope
+    Set-Alias -Name rd     -Value Invoke-CmdRmdir  -Scope Global -Force
     Set-Alias -Name type   -Value Invoke-CmdType   -Scope Global -Force -Option AllScope
+    Set-Alias -Name mkdir  -Value Invoke-CmdMkdir  -Scope Global -Force -Option AllScope
+    Set-Alias -Name md     -Value Invoke-CmdMkdir  -Scope Global -Force
+    Set-Alias -Name echo   -Value Invoke-CmdEcho   -Scope Global -Force -Option AllScope
+    Set-Alias -Name set    -Value Invoke-CmdSet    -Scope Global -Force -Option AllScope
+    Set-Alias -Name cls    -Value Invoke-CmdCls    -Scope Global -Force -Option AllScope
+    Set-Alias -Name clear  -Value Invoke-CmdCls    -Scope Global -Force
+    Set-Alias -Name title  -Value Invoke-CmdTitle  -Scope Global -Force
+    Set-Alias -Name ver    -Value Invoke-CmdVer    -Scope Global -Force
+    Set-Alias -Name vol    -Value Invoke-CmdVol    -Scope Global -Force
+    Set-Alias -Name curl   -Value Invoke-CmdCurl   -Scope Global -Force -Option AllScope
     Set-Alias -Name mklink -Value Invoke-CmdMklink -Scope Global -Force
     Set-Alias -Name assoc  -Value Invoke-CmdAssoc  -Scope Global -Force
     Set-Alias -Name ftype  -Value Invoke-CmdFtype  -Scope Global -Force
-    Set-Alias -Name vol    -Value Invoke-CmdVol    -Scope Global -Force
-    Set-Alias -Name ver    -Value Invoke-CmdVer    -Scope Global -Force
-    Set-Alias -Name title  -Value Invoke-CmdTitle  -Scope Global -Force
-    Set-Alias -Name set    -Value Invoke-CmdSet    -Scope Global -Force -Option AllScope
     Set-Alias -Name color  -Value Invoke-CmdColor  -Scope Global -Force
-    Set-Alias -Name cls    -Value Invoke-CmdCls    -Scope Global -Force -Option AllScope
-    Set-Alias -Name mkdir  -Value Invoke-CmdMkdir  -Scope Global -Force -Option AllScope
-    Set-Alias -Name echo   -Value Invoke-CmdEcho   -Scope Global -Force -Option AllScope
-    Set-Alias -Name curl   -Value Invoke-CmdCurl   -Scope Global -Force -Option AllScope
 
-    # ---- 'c' shortcut: force run anything via CMD (preserves PWD) ----
+    # ---- 'c' shortcut: still tries cmd.exe for users who want raw CMD access ----
+    # In contexts where cmd.exe works, this runs arbitrary CMD commands.
+    # In contexts where cmd.exe is blocked, this will silently fail.
     function global:c { & cmd.exe /c "cd /d ""$PWD"" && $($args -join ' ')" }
 
     # ---- NETWORK SHORTCUTS ----
