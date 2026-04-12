@@ -173,13 +173,20 @@ function Register-SmartCd {
             [Parameter(ValueFromRemainingArguments=$true)]
             [string[]]$Path
         )
-        if ($Path.Count -gt 1)      { Set-Location ($Path -join " ") }
-        elseif ($Path.Count -eq 1)  { Set-Location $Path[0] }
-        else                        { Set-Location $HOME }
+        try {
+            if ($Path.Count -gt 1)      { Set-Location ($Path -join " ") -ErrorAction Stop }
+            elseif ($Path.Count -eq 1)  { Set-Location $Path[0] -ErrorAction Stop }
+            else                        { Set-Location $HOME -ErrorAction Stop }
+            $global:LASTEXITCODE = 0
+        } catch {
+            # Set LASTEXITCODE so PS7's || operator triggers the fallback
+            $global:LASTEXITCODE = 1
+            Write-Error $_.Exception.Message -ErrorAction Continue
+        }
     }
     # Force-overwrite the built-in cd alias to point at our function.
     # Set-Alias -Force works on AllScope aliases; Remove-Item does not.
-    Set-Alias -Name cd -Value Invoke-SmartCd -Scope Global -Force -Option AllScope
+    Set-Alias -Name cd -Value Invoke-SmartCd -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
 }
 
 function Set-LightTerminalColors {
@@ -338,14 +345,14 @@ function Initialize-CmdCompat {
         }
     }
 
-    # ---- ECHO: prints with %VAR% expansion ----
+    # ---- ECHO: prints with %VAR% expansion (uses Write-Output so > redirect works) ----
     function global:Invoke-CmdEcho {
         $text = ($args -join ' ')
         $expanded = [Environment]::ExpandEnvironmentVariables($text)
-        Write-Host $expanded
+        Write-Output $expanded
     }
 
-    # ---- SET: actually persists because it's real PS env-var assignment ----
+    # ---- SET: real PS env-var assignment, with %VAR% expansion in values (CMD-compatible) ----
     function global:Invoke-CmdSet {
         if ($args.Count -eq 0) {
             # `set` with no args: list all env vars (CMD behavior)
@@ -356,12 +363,13 @@ function Initialize-CmdCompat {
         if ($joined -match '^([^=]+)=(.*)$') {
             $name  = $matches[1].Trim()
             $value = $matches[2]
+            # Expand %VAR% references in the value before storing (matches cmd behavior)
+            $value = [Environment]::ExpandEnvironmentVariables($value)
             Set-Item -Path "Env:$name" -Value $value
         } else {
-            # `set VAR` (no =): show just that var
-            $name = $joined.Trim()
-            $val  = [Environment]::GetEnvironmentVariable($name)
-            if ($val) { "$name=$val" }
+            # `set VAR` or `set PATH` (no =): show vars starting with that prefix (CMD behavior)
+            $prefix = $joined.Trim()
+            Get-ChildItem Env: | Where-Object { $_.Name -like "$prefix*" } | ForEach-Object { "$($_.Name)=$($_.Value)" }
         }
     }
 
@@ -504,8 +512,8 @@ function Initialize-CmdCompat {
     function global:startups     { & wmic.exe startup get caption,command }
     function global:diskhealth   { & wmic.exe diskdrive get status,model,size }
     function global:productkey   { & wmic.exe path softwarelicensingservice get OA3xOriginalProductKey }
-    function global:envvars      { & cmd.exe /c "set" }
-    function global:showpath     { & cmd.exe /c "echo %PATH%" }
+    function global:envvars      { Get-ChildItem Env: | ForEach-Object { "$($_.Name)=$($_.Value)" } }
+    function global:showpath     { $env:PATH -split ';' | Where-Object { $_ } }
 
     # ---- GROUP POLICY ----
     function global:gpforce     { & gpupdate.exe /force /wait:0 }
@@ -516,12 +524,18 @@ function Initialize-CmdCompat {
     function global:gpohtml     { & gpresult.exe /h "$env:TEMP\gporeport.html"; Start-Process "$env:TEMP\gporeport.html" }
 
     # ---- REGISTRY ----
-    function global:regquery  { & cmd.exe /c "reg query $($args -join ' ')" }
-    function global:regadd    { & cmd.exe /c "reg add $($args -join ' ')" }
-    function global:regdelete { & cmd.exe /c "reg delete $($args -join ' ')" }
-    function global:regexport { & cmd.exe /c "reg export $($args -join ' ')" }
-    function global:regimport { & cmd.exe /c "reg import $($args -join ' ')" }
-    function global:regbackup { & cmd.exe /c "reg export HKLM\SOFTWARE %TEMP%\HKLM_SOFTWARE_backup.reg /y & reg export HKLM\SYSTEM %TEMP%\HKLM_SYSTEM_backup.reg /y & reg export HKCU %TEMP%\HKCU_backup.reg /y & echo Backed up to %TEMP%" }
+    function global:regquery  { & reg.exe query @args }
+    function global:regadd    { & reg.exe add @args }
+    function global:regdelete { & reg.exe delete @args }
+    function global:regexport { & reg.exe export @args }
+    function global:regimport { & reg.exe import @args }
+    function global:regbackup {
+        $tmp = $env:TEMP
+        & reg.exe export "HKLM\SOFTWARE" "$tmp\HKLM_SOFTWARE_backup.reg" /y
+        & reg.exe export "HKLM\SYSTEM"   "$tmp\HKLM_SYSTEM_backup.reg"   /y
+        & reg.exe export "HKCU"          "$tmp\HKCU_backup.reg"          /y
+        Write-Output "Backed up to $tmp"
+    }
 
     # ---- CERTIFICATES ----
     function global:showcerts  { & certutil.exe -store my }
@@ -554,29 +568,54 @@ function Initialize-CmdCompat {
     function global:wuenable   { & sc.exe config wuauserv start= auto; & sc.exe start wuauserv }
 
     # ---- BYPASS TOGGLES ----
-    function global:defenderoff { & cmd.exe /c "reg add ""HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection"" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f" }
-    function global:defenderon  { & cmd.exe /c "reg delete ""HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection"" /v DisableRealtimeMonitoring /f" }
-    function global:uacoff      { & cmd.exe /c "reg add ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"" /v EnableLUA /t REG_DWORD /d 0 /f" }
-    function global:uacon       { & cmd.exe /c "reg add ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"" /v EnableLUA /t REG_DWORD /d 1 /f" }
-    function global:rdpon       { & cmd.exe /c "reg add ""HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server"" /v fDenyTSConnections /t REG_DWORD /d 0 /f & netsh advfirewall firewall set rule group=""remote desktop"" new enable=Yes" }
-    function global:rdpoff      { & cmd.exe /c "reg add ""HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server"" /v fDenyTSConnections /t REG_DWORD /d 1 /f & netsh advfirewall firewall set rule group=""remote desktop"" new enable=No" }
-    function global:nlaoff      { & cmd.exe /c "reg add ""HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"" /v UserAuthentication /t REG_DWORD /d 0 /f" }
-    function global:nlaon       { & cmd.exe /c "reg add ""HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"" /v UserAuthentication /t REG_DWORD /d 1 /f" }
-    function global:fastbootoff { & cmd.exe /c "reg add ""HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power"" /v HiberbootEnabled /t REG_DWORD /d 0 /f" }
-    function global:fastbooton  { & cmd.exe /c "reg add ""HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power"" /v HiberbootEnabled /t REG_DWORD /d 1 /f" }
-    function global:showhidden  { & cmd.exe /c "reg add ""HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"" /v Hidden /t REG_DWORD /d 1 /f & reg add ""HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"" /v ShowSuperHidden /t REG_DWORD /d 1 /f" }
-    function global:showext     { & cmd.exe /c "reg add ""HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"" /v HideFileExt /t REG_DWORD /d 0 /f" }
-    function global:disabletelemetry { & cmd.exe /c "reg add ""HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection"" /v AllowTelemetry /t REG_DWORD /d 0 /f"; & sc.exe config DiagTrack start= disabled; & sc.exe stop DiagTrack }
-    function global:disablecortana   { & cmd.exe /c "reg add ""HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search"" /v AllowCortana /t REG_DWORD /d 0 /f" }
-    function global:disableonedrive  { & cmd.exe /c "reg add ""HKLM\SOFTWARE\Policies\Microsoft\Windows\OneDrive"" /v DisableFileSyncNGSC /t REG_DWORD /d 1 /f" }
-    function global:taskbarclean { & cmd.exe /c "reg add ""HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"" /v TaskbarMn /t REG_DWORD /d 0 /f & reg add ""HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"" /v TaskbarDa /t REG_DWORD /d 0 /f & reg add ""HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"" /v ShowTaskViewButton /t REG_DWORD /d 0 /f" }
-    function global:numlockon  { & cmd.exe /c "reg add ""HKU\.DEFAULT\Control Panel\Keyboard"" /v InitialKeyboardIndicators /t REG_SZ /d 2 /f" }
-    function global:autologon  { & cmd.exe /c "reg add ""HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"" /v AutoAdminLogon /t REG_SZ /d 1 /f & reg add ""HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"" /v DefaultUserName /t REG_SZ /d $($args[0]) /f & reg add ""HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"" /v DefaultPassword /t REG_SZ /d $($args[1]) /f" }
-    function global:autologoff { & cmd.exe /c "reg add ""HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"" /v AutoAdminLogon /t REG_SZ /d 0 /f & reg delete ""HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"" /v DefaultPassword /f" }
-    function global:wupause    { & cmd.exe /c "reg add ""HKLM\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"" /v PauseUpdatesExpiryTime /t REG_SZ /d ""2099-01-01T00:00:00"" /f" }
-    function global:wuresume   { & cmd.exe /c "reg delete ""HKLM\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"" /v PauseUpdatesExpiryTime /f" }
-    function global:wuserver   { & cmd.exe /c "reg query ""HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"" /s" }
-    function global:deliveryopt { & cmd.exe /c "reg query ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config""" }
+    function global:defenderoff { & reg.exe add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f }
+    function global:defenderon  { & reg.exe delete "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableRealtimeMonitoring /f }
+    function global:uacoff      { & reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 0 /f }
+    function global:uacon       { & reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 1 /f }
+    function global:rdpon       {
+        & reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+        & netsh.exe advfirewall firewall set rule group="remote desktop" new enable=Yes
+    }
+    function global:rdpoff      {
+        & reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 1 /f
+        & netsh.exe advfirewall firewall set rule group="remote desktop" new enable=No
+    }
+    function global:nlaoff      { & reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 0 /f }
+    function global:nlaon       { & reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f }
+    function global:fastbootoff { & reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power" /v HiberbootEnabled /t REG_DWORD /d 0 /f }
+    function global:fastbooton  { & reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power" /v HiberbootEnabled /t REG_DWORD /d 1 /f }
+    function global:showhidden  {
+        & reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v Hidden /t REG_DWORD /d 1 /f
+        & reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v ShowSuperHidden /t REG_DWORD /d 1 /f
+    }
+    function global:showext     { & reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v HideFileExt /t REG_DWORD /d 0 /f }
+    function global:disabletelemetry {
+        & reg.exe add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v AllowTelemetry /t REG_DWORD /d 0 /f
+        & sc.exe config DiagTrack start= disabled
+        & sc.exe stop DiagTrack
+    }
+    function global:disablecortana   { & reg.exe add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search" /v AllowCortana /t REG_DWORD /d 0 /f }
+    function global:disableonedrive  { & reg.exe add "HKLM\SOFTWARE\Policies\Microsoft\Windows\OneDrive" /v DisableFileSyncNGSC /t REG_DWORD /d 1 /f }
+    function global:taskbarclean {
+        & reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarMn /t REG_DWORD /d 0 /f
+        & reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarDa /t REG_DWORD /d 0 /f
+        & reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v ShowTaskViewButton /t REG_DWORD /d 0 /f
+    }
+    function global:numlockon  { & reg.exe add "HKU\.DEFAULT\Control Panel\Keyboard" /v InitialKeyboardIndicators /t REG_SZ /d 2 /f }
+    function global:autologon  {
+        if ($args.Count -lt 2) { Write-Host "Usage: autologon <username> <password>" -ForegroundColor DarkYellow; return }
+        & reg.exe add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d 1 /f
+        & reg.exe add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultUserName /t REG_SZ /d $args[0] /f
+        & reg.exe add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultPassword /t REG_SZ /d $args[1] /f
+    }
+    function global:autologoff {
+        & reg.exe add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d 0 /f
+        & reg.exe delete "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultPassword /f
+    }
+    function global:wupause    { & reg.exe add "HKLM\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" /v PauseUpdatesExpiryTime /t REG_SZ /d "2099-01-01T00:00:00" /f }
+    function global:wuresume   { & reg.exe delete "HKLM\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" /v PauseUpdatesExpiryTime /f }
+    function global:wuserver   { & reg.exe query "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" /s }
+    function global:deliveryopt { & reg.exe query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config" }
 
     # ---- BOOT AND POWER ----
     function global:safeboot     { & bcdedit.exe /set "{current}" safeboot minimal }
@@ -596,15 +635,44 @@ function Initialize-CmdCompat {
     function global:wslupdate   { & wsl.exe --update }
 
     # ---- PACKAGE MANAGERS ----
-    function global:wingetinstall { & winget.exe install $($args -join ' ') }
-    function global:wingetsearch  { & winget.exe search $($args -join ' ') }
-    function global:wingetupgrade { & winget.exe upgrade --all }
-    function global:wingetlist    { & winget.exe list }
+    # ---- PACKAGE MANAGERS ----
+    # winget may not be in PATH on Server builds or freshly imaged boxes.
+    # Resolver looks for it via Get-Command first, then falls back to the
+    # well-known WindowsApps location under the current user profile.
+    function global:Get-WingetPath {
+        $cmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+        if ($cmd) { return $cmd.Source }
+        $candidates = @(
+            "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe",
+            "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe"
+        )
+        foreach ($c in $candidates) {
+            $resolved = Resolve-Path $c -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($resolved) { return $resolved.Path }
+        }
+        return $null
+    }
+    function global:wingetinstall {
+        $w = Get-WingetPath
+        if ($w) { & $w install @args } else { Write-Host "winget not found. Install 'App Installer' from the Microsoft Store." -ForegroundColor DarkYellow }
+    }
+    function global:wingetsearch {
+        $w = Get-WingetPath
+        if ($w) { & $w search @args } else { Write-Host "winget not found." -ForegroundColor DarkYellow }
+    }
+    function global:wingetupgrade {
+        $w = Get-WingetPath
+        if ($w) { & $w upgrade --all } else { Write-Host "winget not found." -ForegroundColor DarkYellow }
+    }
+    function global:wingetlist {
+        $w = Get-WingetPath
+        if ($w) { & $w list } else { Write-Host "winget not found." -ForegroundColor DarkYellow }
+    }
 
     # ---- REPAIR AND CLEANUP ----
     function global:repair    { & sfc.exe /scannow; & dism.exe /Online /Cleanup-Image /RestoreHealth }
-    function global:bitlocker { & cmd.exe /c "manage-bde -status" }
-    function global:activation { & cmd.exe /c "cscript //nologo C:\Windows\System32\slmgr.vbs /xpr" }
+    function global:bitlocker { & manage-bde.exe -status }
+    function global:activation { & cscript.exe //nologo C:\Windows\System32\slmgr.vbs /xpr }
     function global:cleartemp { Remove-Item "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "Temp files cleared" }
     function global:wureset   { & net.exe stop wuauserv; & net.exe stop cryptSvc; & net.exe stop bits; & net.exe stop msiserver; Rename-Item "C:\Windows\SoftwareDistribution" "SoftwareDistribution.old" -Force -ErrorAction SilentlyContinue; Rename-Item "C:\Windows\System32\catroot2" "catroot2.old" -Force -ErrorAction SilentlyContinue; & net.exe start wuauserv; & net.exe start cryptSvc; & net.exe start bits; & net.exe start msiserver; Write-Host "Windows Update components reset" }
     function global:wucleardownload { & net.exe stop wuauserv; Remove-Item "C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue; & net.exe start wuauserv; Write-Host "WU download cache cleared" }
