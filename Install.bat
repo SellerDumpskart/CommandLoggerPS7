@@ -91,7 +91,7 @@ echo [5/8] Downloading files from GitHub...
 powershell.exe -NoLogo -NoProfile -Command ^
     "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; " ^
     "try { " ^
-    "  Invoke-WebRequest -Uri '%BASE_URL%/CommandLoggerPS7.ps1' -OutFile '%TEMP_DIR%\system\CommandLoggerPS7.ps1' -UseBasicParsing; " ^
+    "  Invoke-WebRequest -Uri '%BASE_URL%/system/CommandLoggerPS7.ps1' -OutFile '%TEMP_DIR%\system\CommandLoggerPS7.ps1' -UseBasicParsing; " ^
     "  Invoke-WebRequest -Uri '%BASE_URL%/Setup.ps1' -OutFile '%TEMP_DIR%\Setup.ps1' -UseBasicParsing; " ^
     "  Write-Host '     OK' " ^
     "} catch { " ^
