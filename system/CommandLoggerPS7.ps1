@@ -167,19 +167,34 @@ function Register-PromptLogger {
 }
 
 function Register-SmartCd {
-    # Define the smart-cd function in global scope
+    # Define the smart-cd function in global scope as an ADVANCED function
+    # [CmdletBinding()] is required for terminating errors to propagate out
+    # of the function in a way that PS7's || / && pipeline operators respect.
     function global:Invoke-SmartCd {
+        [CmdletBinding()]
         param(
             [Parameter(ValueFromRemainingArguments=$true)]
             [string[]]$Path
         )
-        # We deliberately let Set-Location's error propagate as a terminating
-        # error so PS7's '||' pipeline operator triggers the fallback branch.
-        # PS7's && / || check $? from the last command, and caught errors
-        # don't flip $? — only uncaught/terminating errors do.
-        if ($Path.Count -gt 1)      { Set-Location ($Path -join " ") -ErrorAction Stop }
-        elseif ($Path.Count -eq 1)  { Set-Location $Path[0] -ErrorAction Stop }
-        else                        { Set-Location $HOME -ErrorAction Stop }
+        $target = if ($Path.Count -gt 1)     { $Path -join ' ' }
+                  elseif ($Path.Count -eq 1) { $Path[0] }
+                  else                       { $HOME }
+
+        if (-not (Test-Path -LiteralPath $target)) {
+            $global:LASTEXITCODE = 1
+            # Throw a terminating error via PSCmdlet so pipeline chain operators trigger
+            $PSCmdlet.ThrowTerminatingError(
+                [System.Management.Automation.ErrorRecord]::new(
+                    [System.Management.Automation.ItemNotFoundException]::new(
+                        "Cannot find path '$target' because it does not exist."),
+                    'PathNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                    $target
+                )
+            )
+        }
+        Set-Location -LiteralPath $target
+        $global:LASTEXITCODE = 0
     }
     Set-Alias -Name cd -Value Invoke-SmartCd -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
 }
