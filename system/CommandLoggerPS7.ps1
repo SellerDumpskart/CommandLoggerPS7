@@ -408,8 +408,11 @@ function Initialize-CmdCompat {
     }
 
     # ---- CURL: real curl.exe (calls the .exe directly, no cmd.exe) ----
+    # IMPORTANT: @(...) forces array context so that `@expanded` splats correctly
+    # even when $args has only one element. Without the @() wrap, ForEach-Object
+    # returns a scalar string, and @scalar splats character-by-character.
     function global:Invoke-CmdCurl {
-        $expanded = $args | ForEach-Object { [Environment]::ExpandEnvironmentVariables("$_") }
+        $expanded = @($args | ForEach-Object { [Environment]::ExpandEnvironmentVariables("$_") })
         & curl.exe @expanded
     }
 
