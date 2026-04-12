@@ -417,30 +417,33 @@ function Initialize-CmdCompat {
     }
 
     # Force-overwrite the built-in aliases (works on AllScope ones)
-    Set-Alias -Name dir    -Value Invoke-CmdDir    -Scope Global -Force -Option AllScope
-    Set-Alias -Name move   -Value Invoke-CmdMove   -Scope Global -Force -Option AllScope
-    Set-Alias -Name copy   -Value Invoke-CmdCopy   -Scope Global -Force -Option AllScope
-    Set-Alias -Name del    -Value Invoke-CmdDel    -Scope Global -Force -Option AllScope
-    Set-Alias -Name erase  -Value Invoke-CmdDel    -Scope Global -Force -Option AllScope
-    Set-Alias -Name ren    -Value Invoke-CmdRen    -Scope Global -Force -Option AllScope
-    Set-Alias -Name rename -Value Invoke-CmdRen    -Scope Global -Force -Option AllScope
-    Set-Alias -Name rmdir  -Value Invoke-CmdRmdir  -Scope Global -Force -Option AllScope
-    Set-Alias -Name rd     -Value Invoke-CmdRmdir  -Scope Global -Force -Option AllScope
-    Set-Alias -Name type   -Value Invoke-CmdType   -Scope Global -Force -Option AllScope
-    Set-Alias -Name mkdir  -Value Invoke-CmdMkdir  -Scope Global -Force -Option AllScope
-    Set-Alias -Name md     -Value Invoke-CmdMkdir  -Scope Global -Force -Option AllScope
-    Set-Alias -Name echo   -Value Invoke-CmdEcho   -Scope Global -Force -Option AllScope
-    Set-Alias -Name set    -Value Invoke-CmdSet    -Scope Global -Force -Option AllScope
-    Set-Alias -Name cls    -Value Invoke-CmdCls    -Scope Global -Force -Option AllScope
-    Set-Alias -Name clear  -Value Invoke-CmdCls    -Scope Global -Force -Option AllScope
-    Set-Alias -Name title  -Value Invoke-CmdTitle  -Scope Global -Force
-    Set-Alias -Name ver    -Value Invoke-CmdVer    -Scope Global -Force
-    Set-Alias -Name vol    -Value Invoke-CmdVol    -Scope Global -Force
-    Set-Alias -Name curl   -Value Invoke-CmdCurl   -Scope Global -Force -Option AllScope
-    Set-Alias -Name mklink -Value Invoke-CmdMklink -Scope Global -Force
-    Set-Alias -Name assoc  -Value Invoke-CmdAssoc  -Scope Global -Force
-    Set-Alias -Name ftype  -Value Invoke-CmdFtype  -Scope Global -Force
-    Set-Alias -Name color  -Value Invoke-CmdColor  -Scope Global -Force
+    # All Set-Alias calls use -ErrorAction SilentlyContinue so the script never
+    # spams startup with errors if an alias can't be overwritten in some edge case.
+    Set-Alias -Name dir    -Value Invoke-CmdDir    -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name move   -Value Invoke-CmdMove   -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name copy   -Value Invoke-CmdCopy   -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name del    -Value Invoke-CmdDel    -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name erase  -Value Invoke-CmdDel    -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name ren    -Value Invoke-CmdRen    -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name rename -Value Invoke-CmdRen    -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name rmdir  -Value Invoke-CmdRmdir  -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name type   -Value Invoke-CmdType   -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name mkdir  -Value Invoke-CmdMkdir  -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    # Note: 'md' and 'rd' are read-only PS functions that cannot be overwritten
+    # by Set-Alias. They still work natively via PS's built-in New-Item/Remove-Item,
+    # so they're left alone. Use 'mkdir' / 'rmdir' for CMD-compatible behavior.
+    Set-Alias -Name echo   -Value Invoke-CmdEcho   -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name set    -Value Invoke-CmdSet    -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name cls    -Value Invoke-CmdCls    -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name clear  -Value Invoke-CmdCls    -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name title  -Value Invoke-CmdTitle  -Scope Global -Force -ErrorAction SilentlyContinue
+    Set-Alias -Name ver    -Value Invoke-CmdVer    -Scope Global -Force -ErrorAction SilentlyContinue
+    Set-Alias -Name vol    -Value Invoke-CmdVol    -Scope Global -Force -ErrorAction SilentlyContinue
+    Set-Alias -Name curl   -Value Invoke-CmdCurl   -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
+    Set-Alias -Name mklink -Value Invoke-CmdMklink -Scope Global -Force -ErrorAction SilentlyContinue
+    Set-Alias -Name assoc  -Value Invoke-CmdAssoc  -Scope Global -Force -ErrorAction SilentlyContinue
+    Set-Alias -Name ftype  -Value Invoke-CmdFtype  -Scope Global -Force -ErrorAction SilentlyContinue
+    Set-Alias -Name color  -Value Invoke-CmdColor  -Scope Global -Force -ErrorAction SilentlyContinue
 
     # ---- 'c' shortcut: still tries cmd.exe for users who want raw CMD access ----
     # In contexts where cmd.exe works, this runs arbitrary CMD commands.
