@@ -203,10 +203,10 @@ function Set-TerminalColors {
     if (Get-Module -ListAvailable PSReadLine) {
         try {
             Import-Module PSReadLine -ErrorAction SilentlyContinue
-            # Use the console's own foreground color for PSReadLine tokens.
-            # This is guaranteed readable because the terminal is already
-            # using it to display text (prompt, output, etc).
-            $c = "$($Host.UI.RawUI.ForegroundColor)"
+            $fg = $Host.UI.RawUI.ForegroundColor
+            # Gray is PS7's default but invisible on light backgrounds.
+            # Replace it with Black; keep everything else as-is.
+            $c = if ($fg -eq 'Gray') { 'Black' } else { "$fg" }
             Set-PSReadLineOption -Colors @{
                 Command = $c; Parameter = $c; Operator = $c; Variable = $c
                 String  = $c; Number    = $c; Member   = $c; Keyword  = $c
