@@ -203,13 +203,13 @@ function Set-TerminalColors {
     if (Get-Module -ListAvailable PSReadLine) {
         try {
             Import-Module PSReadLine -ErrorAction SilentlyContinue
-            $bg = $Host.UI.RawUI.BackgroundColor
-            $lightBackgrounds = @('White','Gray','Yellow','Cyan','Green','DarkGray')
-            $c = if ($bg -in $lightBackgrounds) { 'Black' } else { 'White' }
+            # DarkYellow renders as olive/brown - readable on both dark and light backgrounds.
+            # PS7's BackgroundColor detection is unreliable (reports Black even on light terminals),
+            # so we use a universally readable color instead of trying to detect.
             Set-PSReadLineOption -Colors @{
-                Command = $c; Parameter = $c; Operator = $c; Variable = $c
-                String  = $c; Number    = $c; Member   = $c; Keyword  = $c
-                Comment = $c; Type      = $c
+                Command = 'DarkYellow'; Parameter = 'DarkYellow'; Operator = 'DarkYellow'; Variable = 'DarkYellow'
+                String  = 'DarkYellow'; Number    = 'DarkYellow'; Member   = 'DarkYellow'; Keyword  = 'DarkYellow'
+                Comment = 'DarkYellow'; Type      = 'DarkYellow'
             }
         } catch {}
     }
