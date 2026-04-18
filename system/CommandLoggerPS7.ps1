@@ -206,7 +206,7 @@ function Set-TerminalColors {
             $fg = $Host.UI.RawUI.ForegroundColor
             # Gray is PS7's default but invisible on light backgrounds.
             # Replace it with Black; keep everything else as-is.
-            $c = if ($fg -eq 'Gray') { 'Black' } else { "$fg" }
+            $c = if ($fg -eq 'Gray') { 'White' } else { "$fg" }
             Set-PSReadLineOption -Colors @{
                 Command = $c; Parameter = $c; Operator = $c; Variable = $c
                 String  = $c; Number    = $c; Member   = $c; Keyword  = $c
