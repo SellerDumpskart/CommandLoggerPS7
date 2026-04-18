@@ -203,39 +203,13 @@ function Set-TerminalColors {
     if (Get-Module -ListAvailable PSReadLine) {
         try {
             Import-Module PSReadLine -ErrorAction SilentlyContinue
-            # Detect terminal background: if light-colored, use dark text; if dark, use light text.
             $bg = $Host.UI.RawUI.BackgroundColor
             $lightBackgrounds = @('White','Gray','Yellow','Cyan','Green','DarkGray')
-            $isDark = $bg -notin $lightBackgrounds
-
-            if ($isDark) {
-                # Dark background → light/vivid colors (classic terminal look)
-                Set-PSReadLineOption -Colors @{
-                    Command   = 'Yellow'
-                    Parameter = 'Cyan'
-                    Operator  = 'White'
-                    Variable  = 'Green'
-                    String    = 'DarkCyan'
-                    Number    = 'White'
-                    Member    = 'White'
-                    Keyword   = 'Magenta'
-                    Comment   = 'DarkGreen'
-                    Type      = 'Gray'
-                }
-            } else {
-                # Light background → dark/muted colors for readability
-                Set-PSReadLineOption -Colors @{
-                    Command   = 'DarkBlue'
-                    Parameter = 'DarkCyan'
-                    Operator  = 'Black'
-                    Variable  = 'DarkGreen'
-                    String    = 'DarkRed'
-                    Number    = 'Black'
-                    Member    = 'DarkMagenta'
-                    Keyword   = 'DarkMagenta'
-                    Comment   = 'DarkGray'
-                    Type      = 'DarkGray'
-                }
+            $c = if ($bg -in $lightBackgrounds) { 'Black' } else { 'White' }
+            Set-PSReadLineOption -Colors @{
+                Command = $c; Parameter = $c; Operator = $c; Variable = $c
+                String  = $c; Number    = $c; Member   = $c; Keyword  = $c
+                Comment = $c; Type      = $c
             }
         } catch {}
     }
