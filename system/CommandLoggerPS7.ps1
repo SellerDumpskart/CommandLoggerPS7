@@ -7,7 +7,7 @@
 #    - Session detection (DWAgent/MeshCentral/SSH/RDP/CMD)
 #    - Custom cd (handles spaces without quotes)
 #    - cmdcompat layer (CMD-compatible function wrappers)
-#    - PSReadLine white colors for light terminals
+#    - PSReadLine colors auto-detect dark/light terminal background
 #
 #  Requires: PowerShell 7+
 # =====================================================
@@ -199,14 +199,43 @@ function Register-SmartCd {
     Set-Alias -Name cd -Value Invoke-SmartCd -Scope Global -Force -Option AllScope -ErrorAction SilentlyContinue
 }
 
-function Set-LightTerminalColors {
+function Set-TerminalColors {
     if (Get-Module -ListAvailable PSReadLine) {
         try {
             Import-Module PSReadLine -ErrorAction SilentlyContinue
-            Set-PSReadLineOption -Colors @{
-                Command   = 'White'; Parameter = 'White'; Operator = 'White'
-                Variable  = 'White'; String    = 'White'; Number   = 'White'
-                Member    = 'White'; Keyword   = 'White'
+            # Detect terminal background: if light-colored, use dark text; if dark, use light text.
+            $bg = $Host.UI.RawUI.BackgroundColor
+            $lightBackgrounds = @('White','Gray','Yellow','Cyan','Green','DarkGray')
+            $isDark = $bg -notin $lightBackgrounds
+
+            if ($isDark) {
+                # Dark background → light/vivid colors (classic terminal look)
+                Set-PSReadLineOption -Colors @{
+                    Command   = 'Yellow'
+                    Parameter = 'Cyan'
+                    Operator  = 'White'
+                    Variable  = 'Green'
+                    String    = 'DarkCyan'
+                    Number    = 'White'
+                    Member    = 'White'
+                    Keyword   = 'Magenta'
+                    Comment   = 'DarkGreen'
+                    Type      = 'Gray'
+                }
+            } else {
+                # Light background → dark/muted colors for readability
+                Set-PSReadLineOption -Colors @{
+                    Command   = 'DarkBlue'
+                    Parameter = 'DarkCyan'
+                    Operator  = 'Black'
+                    Variable  = 'DarkGreen'
+                    String    = 'DarkRed'
+                    Number    = 'Black'
+                    Member    = 'DarkMagenta'
+                    Keyword   = 'DarkMagenta'
+                    Comment   = 'DarkGray'
+                    Type      = 'DarkGray'
+                }
             }
         } catch {}
     }
@@ -497,6 +526,229 @@ function Initialize-CmdCompat {
     # In contexts where cmd.exe is blocked, this will silently fail.
     function global:c { & cmd.exe /c "cd /d ""$PWD"" && $($args -join ' ')" }
 
+    # =========================================================================
+    # BYPASS-INSTALL WORKFLOW HELPERS
+    # =========================================================================
+    # Tooling specifically for the "download a script from the web and run it"
+    # workflow. Logs the URL, file path, and exit code so the chat history has
+    # a complete trail of what was fetched and what happened.
+    # =========================================================================
+
+    # ---- Internal: shared GitHub URL expander ----
+    function global:Expand-GhRef {
+        param([string]$Ref)
+        # Accepts "user/repo/path/to/file.bat" or "user/repo@branch/path/to/file.bat"
+        # Defaults to main branch if no @branch specified.
+        if ($Ref -match '^([^/]+)/([^/]+)(?:@([^/]+))?/(.+)$') {
+            $user   = $matches[1]
+            $repo   = $matches[2]
+            $branch = if ($matches[3]) { $matches[3] } else { 'main' }
+            $path   = $matches[4]
+            return "https://raw.githubusercontent.com/$user/$repo/$branch/$path"
+        }
+        # If it already looks like a URL, pass through
+        if ($Ref -match '^https?://') { return $Ref }
+        return $null
+    }
+
+    # ---- gh: shorthand to download a file from a GitHub repo ----
+    # Usage: gh user/repo/path/to/file.bat
+    #        gh user/repo@dev/path/to/file.bat
+    function global:gh {
+        if ($args.Count -eq 0) {
+            Write-Host "Usage: gh <user>/<repo>[@branch]/<path>" -ForegroundColor DarkYellow
+            Write-Host "  e.g. gh SellerDumpskart/psimouse/psimouse.bat" -ForegroundColor DarkGray
+            return
+        }
+        $url = Expand-GhRef $args[0]
+        if (-not $url) {
+            Write-Host "Invalid GitHub ref. Use: user/repo/path or user/repo@branch/path" -ForegroundColor Red
+            return
+        }
+        $filename = Split-Path -Leaf $url
+        $dest = Join-Path $env:TEMP $filename
+        Write-Host "Downloading $url" -ForegroundColor DarkCyan
+        Write-Host "  -> $dest" -ForegroundColor DarkGray
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -ErrorAction Stop
+            $global:CHL_LastUrl  = $url
+            $global:CHL_LastFile = $dest
+            Write-Host "OK" -ForegroundColor Green
+            Write-Host "  lasturl  = $url" -ForegroundColor DarkGray
+            Write-Host "  lastfile = $dest" -ForegroundColor DarkGray
+        } catch {
+            Write-Host "FAILED: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
+    # ---- runweb: download AND run a script from a URL or GitHub ref ----
+    # Usage: runweb <url-or-ghref> [args...]
+    #        runweb https://example.com/installer.bat
+    #        runweb SellerDumpskart/psimouse/psimouse.bat
+    function global:runweb {
+        if ($args.Count -eq 0) {
+            Write-Host "Usage: runweb <url-or-ghref> [args...]" -ForegroundColor DarkYellow
+            Write-Host "  e.g. runweb SellerDumpskart/psimouse/psimouse.bat" -ForegroundColor DarkGray
+            return
+        }
+        $ref = $args[0]
+        $url = Expand-GhRef $ref
+        if (-not $url) { $url = $ref }  # treat as raw URL
+        $filename = Split-Path -Leaf $url
+        if (-not $filename -or $filename -notmatch '\.(bat|cmd|exe|ps1)$') {
+            $filename = "runweb_$(Get-Random).bat"
+        }
+        $dest = Join-Path $env:TEMP $filename
+        Write-Host "[runweb] Fetching $url" -ForegroundColor DarkCyan
+        Write-Host "[runweb]      to $dest" -ForegroundColor DarkGray
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -ErrorAction Stop
+        } catch {
+            Write-Host "[runweb] DOWNLOAD FAILED: $($_.Exception.Message)" -ForegroundColor Red
+            return
+        }
+        $global:CHL_LastUrl  = $url
+        $global:CHL_LastFile = $dest
+        Write-Host "[runweb] Downloaded ($((Get-Item $dest).Length) bytes), executing..." -ForegroundColor DarkCyan
+        $extraArgs = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
+        $ext = [System.IO.Path]::GetExtension($dest).ToLower()
+        switch ($ext) {
+            '.ps1' { & pwsh.exe -ExecutionPolicy Bypass -NoProfile -File $dest @extraArgs }
+            '.exe' { & $dest @extraArgs }
+            default { & cmd.exe /c "`"$dest`" $($extraArgs -join ' ')" }
+        }
+        Write-Host "[runweb] Exit code: $LASTEXITCODE" -ForegroundColor DarkCyan
+    }
+
+    # ---- runwebps: same as runweb but force PowerShell with bypass ----
+    function global:runwebps {
+        if ($args.Count -eq 0) {
+            Write-Host "Usage: runwebps <url-or-ghref> [args...]" -ForegroundColor DarkYellow
+            return
+        }
+        $ref = $args[0]
+        $url = Expand-GhRef $ref
+        if (-not $url) { $url = $ref }
+        $filename = Split-Path -Leaf $url
+        if (-not $filename -or $filename -notmatch '\.ps1$') {
+            $filename = "runwebps_$(Get-Random).ps1"
+        }
+        $dest = Join-Path $env:TEMP $filename
+        Write-Host "[runwebps] Fetching $url" -ForegroundColor DarkCyan
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -ErrorAction Stop
+        } catch {
+            Write-Host "[runwebps] DOWNLOAD FAILED: $($_.Exception.Message)" -ForegroundColor Red
+            return
+        }
+        $global:CHL_LastUrl  = $url
+        $global:CHL_LastFile = $dest
+        $extraArgs = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
+        Write-Host "[runwebps] Executing with -ExecutionPolicy Bypass -NoProfile" -ForegroundColor DarkCyan
+        & pwsh.exe -ExecutionPolicy Bypass -NoProfile -File $dest @extraArgs
+        Write-Host "[runwebps] Exit code: $LASTEXITCODE" -ForegroundColor DarkCyan
+    }
+
+    # ---- verify: download a file and check its SHA-256 against an expected hash ----
+    # Usage: verify <url-or-ghref> <expected-sha256>
+    function global:verify {
+        if ($args.Count -lt 2) {
+            Write-Host "Usage: verify <url-or-ghref> <expected-sha256>" -ForegroundColor DarkYellow
+            return
+        }
+        $ref      = $args[0]
+        $expected = $args[1].ToLower().Trim()
+        $url = Expand-GhRef $ref
+        if (-not $url) { $url = $ref }
+        $filename = Split-Path -Leaf $url
+        if (-not $filename) { $filename = "verify_$(Get-Random).bin" }
+        $dest = Join-Path $env:TEMP $filename
+        Write-Host "[verify] Downloading $url" -ForegroundColor DarkCyan
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -ErrorAction Stop
+        } catch {
+            Write-Host "[verify] DOWNLOAD FAILED: $($_.Exception.Message)" -ForegroundColor Red
+            return
+        }
+        $actual = (Get-FileHash -Path $dest -Algorithm SHA256).Hash.ToLower()
+        Write-Host "[verify] Expected: $expected" -ForegroundColor DarkGray
+        Write-Host "[verify] Actual:   $actual"   -ForegroundColor DarkGray
+        if ($actual -eq $expected) {
+            Write-Host "[verify] PASS - hash matches" -ForegroundColor Green
+            $global:CHL_LastUrl  = $url
+            $global:CHL_LastFile = $dest
+        } else {
+            Write-Host "[verify] FAIL - hash mismatch! File saved at $dest for inspection." -ForegroundColor Red
+        }
+    }
+
+    # ---- lasturl / lastfile: recall the last downloaded URL and file path ----
+    function global:lasturl  { if ($global:CHL_LastUrl)  { $global:CHL_LastUrl }  else { Write-Host "(no recent url)"  -ForegroundColor DarkGray } }
+    function global:lastfile { if ($global:CHL_LastFile) { $global:CHL_LastFile } else { Write-Host "(no recent file)" -ForegroundColor DarkGray } }
+
+    # ---- viewlog: open today's HTML log in the default browser ----
+    function global:viewlog {
+        $today = Get-Date -Format "yyyy-MM-dd"
+        $logDir = "C:\Users\Public\CommandHistory\HTML\$today"
+        if (-not (Test-Path $logDir)) {
+            Write-Host "No logs for today ($today)" -ForegroundColor DarkYellow
+            return
+        }
+        $logs = Get-ChildItem $logDir -Filter *.html -ErrorAction SilentlyContinue
+        if ($logs.Count -eq 0) {
+            Write-Host "No HTML logs found in $logDir" -ForegroundColor DarkYellow
+            return
+        }
+        # Open the most recently modified one
+        $latest = $logs | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        Write-Host "Opening $($latest.FullName)" -ForegroundColor DarkCyan
+        Start-Process $latest.FullName
+    }
+
+    # ---- searchlog: grep across all TXT logs for a pattern ----
+    # Usage: searchlog <pattern>
+    function global:searchlog {
+        if ($args.Count -eq 0) {
+            Write-Host "Usage: searchlog <pattern>" -ForegroundColor DarkYellow
+            return
+        }
+        $pattern = $args -join ' '
+        $logRoot = "C:\Users\Public\CommandHistory\TXT"
+        if (-not (Test-Path $logRoot)) {
+            Write-Host "No log directory at $logRoot" -ForegroundColor DarkYellow
+            return
+        }
+        Write-Host "Searching for '$pattern' in $logRoot..." -ForegroundColor DarkCyan
+        Get-ChildItem $logRoot -Recurse -Filter *.txt -ErrorAction SilentlyContinue |
+            Select-String -Pattern $pattern -SimpleMatch |
+            ForEach-Object {
+                Write-Host "$($_.Filename):$($_.LineNumber): " -NoNewline -ForegroundColor DarkGray
+                Write-Host $_.Line
+            }
+    }
+
+    # ---- bypass: run any command with execution policy bypass ----
+    # Usage: bypass <ps1-file-or-script-block>
+    function global:bypass {
+        if ($args.Count -eq 0) {
+            Write-Host "Usage: bypass <script.ps1> [args...]" -ForegroundColor DarkYellow
+            return
+        }
+        $first = $args[0]
+        $extraArgs = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
+        if (Test-Path $first) {
+            & pwsh.exe -ExecutionPolicy Bypass -NoProfile -File $first @extraArgs
+        } else {
+            # Treat as inline script
+            $cmd = $args -join ' '
+            & pwsh.exe -ExecutionPolicy Bypass -NoProfile -Command $cmd
+        }
+    }
+    # =========================================================================
+    # END BYPASS-INSTALL WORKFLOW HELPERS
+    # =========================================================================
+
+
     # ---- NETWORK SHORTCUTS ----
     function global:flushdns       { & ipconfig.exe /flushdns }
     function global:registerdns    { & ipconfig.exe /registerdns }
@@ -748,7 +1000,7 @@ function Start-CommandLoggerPS7 {
     Register-PromptLogger
     Register-SmartCd
     Initialize-CmdCompat
-    Set-LightTerminalColors
+    Set-TerminalColors
 
     Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action { Close-HtmlLog } | Out-Null
 }
